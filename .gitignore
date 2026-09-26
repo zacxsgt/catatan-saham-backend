@@ -1,0 +1,14 @@
+# Dependensi (Folder ini sangat berat, biarkan Render yang menginstalnya nanti)
+node_modules/
+
+# File Rahasia (SANGAT PENTING: Mencegah API Key & URL bocor ke publik)
+.env
+
+# Log error bawaan npm
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# File sistem OS dan Editor
+.DS_Store
+.vscode/
