@@ -1,13 +1,14 @@
 // src/utils/aiClient.js
 
 const DEFAULT_FALLBACK_MODELS = [
-  'inclusionai/ling-3.0-flash-fin:free',      // AI 1: Spesialis Keuangan & Investasi
-  'nvidia/nemotron-3-ultra-550b-a55b:free',   // AI 2: Reasoning kuat, tapi bisa lambat
-  'nvidia/nemotron-3-super:free',              // AI 3: Kuat di AIME 2025 (matematika) & SWE-Bench, lebih ringan dari Ultra
-  'openrouter/free'                           // AI 4: Jaring pengaman otomatis dari OpenRouter
+  'nvidia/nemotron-3-ultra-550b-a55b:free',      // AI 1: Reasoning & matematika kuat
+  'nvidia/nemotron-3-super-120b-a12b:free',      // AI 2: Nama slug diperbaiki, kuat di AIME/SWE-Bench
+  'dots-studio/dots-3-note-preview:free',        // AI 3: Umum, reasoning & multi-step
+  'qwen/qwen3.8-27b:free',                       // AI 4: Umum, cadangan tambahan
+  'openrouter/free'                              // AI 5: Jaring pengaman otomatis dari OpenRouter
 ];
 
-const REQUEST_TIMEOUT_MS = 25000; // 25 detik, memberi ruang lebih untuk model reasoning besar
+const REQUEST_TIMEOUT_MS = 25000;
 
 async function callOpenRouter(prompt, model, apiKey) {
   const controller = new AbortController();
