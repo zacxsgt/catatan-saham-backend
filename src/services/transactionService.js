@@ -1,6 +1,6 @@
 // src/services/transactionService.js
 const supabase = require('../config/supabase');
-const { getStockData } = require('./stockService');
+const { getCachedStockData } = require('./stockService');
 const { ValidationError, NotFoundError, ConflictError } = require('../utils/errors');
 
 function validateTransactionInput({ symbol, type, lots, price_per_share, transaction_date }) {
@@ -26,9 +26,6 @@ function validateTransactionInput({ symbol, type, lots, price_per_share, transac
   }
 }
 
-// Replay seluruh riwayat transaksi user untuk satu simbol, secara kronologis,
-// untuk menghitung posisi saat ini (lot bersih + average price per saham).
-// Dipakai baik untuk validasi SELL maupun ringkasan portfolio.
 async function computePosition(userId, symbol) {
   const { data: txs, error } = await supabase
     .from('transactions')
@@ -43,8 +40,8 @@ async function computePosition(userId, symbol) {
     throw new Error('Gagal membaca riwayat transaksi.');
   }
 
-  let totalShares = 0; // dalam satuan lembar saham (lot x 100)
-  let totalCost = 0;   // total modal (Rupiah)
+  let totalShares = 0;
+  let totalCost = 0;
 
   for (const tx of txs || []) {
     const shares = tx.lots * 100;
@@ -53,8 +50,6 @@ async function computePosition(userId, symbol) {
       totalCost += shares * tx.price_per_share;
       totalShares += shares;
     } else {
-      // SELL: kurangi lot, average price tidak berubah —
-      // modal dikurangi proporsional terhadap average price saat itu.
       const avgPrice = totalShares > 0 ? totalCost / totalShares : 0;
       totalCost -= shares * avgPrice;
       totalShares -= shares;
@@ -74,9 +69,10 @@ async function createTransaction(userId, payload) {
 
   const cleanSymbol = symbol.toUpperCase().trim();
 
-  // Sekaligus validasi simbol (format + eksistensi) dan ambil nama emiten,
-  // supaya frontend tidak perlu mengirim nama saham secara manual.
-  const stockData = await getStockData(cleanSymbol);
+  // [FIX] Dulu memanggil getStockData (bisa memicu Yahoo Finance langsung kalau
+  // cache sudah basi). Sekarang pakai getCachedStockData, murni baca cache,
+  // konsisten dengan endpoint harga ringan yang dipakai formulir Beli/Jual.
+  const stockData = await getCachedStockData(cleanSymbol);
 
   if (type === 'SELL') {
     const position = await computePosition(userId, cleanSymbol);
@@ -157,7 +153,6 @@ async function getPortfolioSummary(userId) {
   for (const symbol of uniqueSymbols) {
     const position = await computePosition(userId, symbol);
 
-    // Lewati simbol yang sudah habis terjual sepenuhnya (netLots 0)
     if (position.netLots <= 0) continue;
 
     let currentPrice = null;
@@ -165,7 +160,7 @@ async function getPortfolioSummary(userId) {
     let unrealizedGainLossPercent = null;
 
     try {
-      const stockData = await getStockData(symbol);
+      const stockData = await getCachedStockData(symbol);
       currentPrice = stockData.current_price;
       const currentValue = position.totalShares * currentPrice;
       unrealizedGainLoss = currentValue - position.totalCost;
@@ -176,8 +171,6 @@ async function getPortfolioSummary(userId) {
       totalInvested += position.totalCost;
       totalCurrentValue += currentValue;
     } catch (err) {
-      // Kalau harga terkini gagal diambil (misal rate-limit Yahoo), tetap
-      // tampilkan posisi tanpa data unrealized, jangan gagalkan seluruh ringkasan.
       console.warn(`[PORTFOLIO WARNING] Gagal ambil harga terkini ${symbol}:`, err.message);
     }
 
@@ -218,8 +211,6 @@ async function updateTransaction(userId, transactionId, updates) {
     .single();
 
   if (fetchError || !existing) {
-    // Tidak membedakan "tidak ada" vs "milik orang lain" — keduanya 404,
-    // supaya tidak membocorkan keberadaan data milik user lain.
     throw new NotFoundError('Transaksi tidak ditemukan.');
   }
 
