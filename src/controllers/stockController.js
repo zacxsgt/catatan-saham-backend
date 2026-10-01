@@ -1,5 +1,5 @@
 // src/controllers/stockController.js
-const { processStockRequest } = require('../services/stockService');
+const { processStockRequest, getCachedStockData } = require('../services/stockService');
 const { AppError } = require('../utils/errors');
 
 const MAX_BUDGET = 1000000000000; // 1 Triliun
@@ -8,7 +8,6 @@ async function analyzeStock(req, res) {
   try {
     const { symbol, budget } = req.body;
 
-    // --- 1. VALIDASI SYMBOL ---
     if (!symbol || typeof symbol !== 'string') {
       return res.status(400).json({
         success: false,
@@ -24,7 +23,6 @@ async function analyzeStock(req, res) {
       });
     }
 
-    // --- 2. VALIDASI BUDGET ---
     if (
       budget === undefined ||
       budget === null ||
@@ -53,10 +51,8 @@ async function analyzeStock(req, res) {
       });
     }
 
-    // --- 3. EKSEKUSI SERVICE ---
     const result = await processStockRequest(cleanSymbol, numericBudget);
 
-    // --- 4. RESPONSE SUKSES ---
     return res.status(200).json({
       success: true,
       data: result
@@ -65,9 +61,6 @@ async function analyzeStock(req, res) {
   } catch (error) {
     console.error(`[CONTROLLER ERROR] analyzeStock (User: ${req.user?.id || 'Unknown'}):`, error.message);
 
-    // instanceof memastikan hanya error yang sengaja kita buat (AppError dan turunannya:
-    // ValidationError/404/502 dll) yang pesannya diloloskan ke user. Error tak terduga
-    // dari library lain atau bug internal otomatis jatuh ke 500 generik.
     const isKnownError = error instanceof AppError;
     const statusCode = isKnownError ? error.statusCode : 500;
 
@@ -78,6 +71,28 @@ async function analyzeStock(req, res) {
   }
 }
 
+// [BARU] Endpoint ringan khusus formulir Beli/Jual: hanya baca cache, tidak pernah
+// memanggil Yahoo Finance langsung.
+async function getCachedPriceController(req, res) {
+  try {
+    const { symbol } = req.params;
+    const data = await getCachedStockData(symbol);
+
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    console.error(`[CONTROLLER ERROR] getCachedPrice (User: ${req.user?.id || 'Unknown'}):`, error.message);
+
+    const isKnownError = error instanceof AppError;
+    const statusCode = isKnownError ? error.statusCode : 500;
+
+    return res.status(statusCode).json({
+      success: false,
+      error: isKnownError ? error.message : 'Terjadi kesalahan internal.'
+    });
+  }
+}
+
 module.exports = {
-  analyzeStock
+  analyzeStock,
+  getCachedPriceController
 };

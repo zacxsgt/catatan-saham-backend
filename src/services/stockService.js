@@ -79,10 +79,6 @@ async function getStockData(symbol) {
   const pbv = quote.defaultKeyStatistics?.priceToBook ?? 0;
   const der = quote.financialData?.debtToEquity ?? 0;
   const dividendYield = quote.summaryDetail?.dividendYield ?? 0;
-
-  // [BARU] Data tambahan untuk metode valuasi EV/EBITDA (sektor Infrastruktur/Telco).
-  // enterpriseToEbitda sudah dihitung langsung oleh Yahoo Finance, jadi AI tidak perlu
-  // menghitung rasio ini secara manual dari ebitda dan enterprise_value.
   const ebitda = quote.financialData?.ebitda ?? 0;
   const enterpriseValue = quote.defaultKeyStatistics?.enterpriseValue ?? 0;
   const evToEbitda = quote.defaultKeyStatistics?.enterpriseToEbitda ?? 0;
@@ -103,9 +99,9 @@ async function getStockData(symbol) {
     pbv,
     der,
     dividend_yield: dividendYield,
-    ebitda,                          // [BARU]
-    enterprise_value: enterpriseValue, // [BARU]
-    ev_to_ebitda: evToEbitda,        // [BARU]
+    ebitda,
+    enterprise_value: enterpriseValue,
+    ev_to_ebitda: evToEbitda,
     last_updated: now.toISOString()
   };
 
@@ -118,6 +114,31 @@ async function getStockData(symbol) {
   }
 
   return stockData;
+}
+
+// [BARU] Khusus untuk kebutuhan ringan seperti formulir Beli/Jual: HANYA membaca
+// dari cache Supabase, TIDAK PERNAH memanggil Yahoo Finance secara langsung.
+// Kalau simbolnya belum pernah tersimpan (belum pernah masuk watchlist atau belum
+// pernah dianalisis), fungsi ini melempar 404, bukan diam-diam fetch langsung —
+// supaya formulir tidak memicu panggilan Yahoo yang bisa kena rate-limit.
+async function getCachedStockData(symbol) {
+  const cleanSymbol = symbol.toUpperCase().trim();
+
+  if (!/^[A-Z]{4}$/.test(cleanSymbol)) {
+    throw new ValidationError('Simbol saham harus berupa 4 huruf kapital.');
+  }
+
+  const { data, error } = await supabase
+    .from('stock_prices')
+    .select('symbol, name, current_price, last_updated')
+    .eq('symbol', cleanSymbol)
+    .single();
+
+  if (error || !data) {
+    throw new NotFoundError(`Harga untuk ${cleanSymbol} belum tersedia. Coba cek lewat menu Analisis dulu.`);
+  }
+
+  return data;
 }
 
 async function analyzeStockWithAI(stockData, budget) {
@@ -216,6 +237,7 @@ async function processStockRequest(symbol, budget) {
 
 module.exports = {
   getStockData,
+  getCachedStockData,
   analyzeStockWithAI,
   processStockRequest
 };
