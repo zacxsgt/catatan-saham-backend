@@ -78,6 +78,7 @@ function startCronJobs() {
     });
   });
 
+  console.log('[CEK ZONA WAKTU] Server menganggap sekarang:', new Date().toString());
   console.log('⏰ Background Jobs (Cron) berhasil diinisialisasi: watchlist 4x sesuai jam bursa + cache cleanup (harian 00:00).');
 }
 
