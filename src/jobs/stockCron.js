@@ -11,6 +11,7 @@ const WATCHLIST = [
 ];
 
 const DELAY_BETWEEN_REQUESTS_MS = 1500;
+const TIMEZONE = 'Asia/Jakarta';
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -34,6 +35,7 @@ async function runWatchlistUpdate() {
   }
 
   console.log(`[CRON] Update watchlist selesai. Berhasil: ${successCount}, Gagal: ${failCount}`);
+  return { successCount, failCount };
 }
 
 async function runCacheCleanup() {
@@ -66,20 +68,22 @@ function startCronJobs() {
     });
   };
 
-  // Sesuai jam bursa BEI (WIB), berbeda untuk Jumat karena istirahat siangnya lebih awal.
-  cron.schedule('55 8 * * 1-5', runSafely);   // sesaat sebelum pasar buka, semua hari kerja
-  cron.schedule('5 12 * * 1-4', runSafely);   // sesaat setelah Sesi I tutup, Senin-Kamis
-  cron.schedule('35 11 * * 5', runSafely);    // sesaat setelah Sesi I tutup, khusus Jumat
-  cron.schedule('55 15 * * 1-5', runSafely);  // sesaat setelah pasar tutup, semua hari kerja
+  // [FIX] Memakai opsi timezone resmi, bukan hitungan manual selisih jam.
+  // Jam di bawah ini sudah dalam WIB, pustaka yang menerjemahkan ke jam
+  // server sendiri, bukan kita.
+  cron.schedule('55 8 * * 1-5', runSafely, { timezone: TIMEZONE });   // sesaat sebelum pasar buka
+  cron.schedule('5 12 * * 1-4', runSafely, { timezone: TIMEZONE });   // sesaat setelah Sesi I tutup, Senin-Kamis
+  cron.schedule('35 11 * * 5', runSafely, { timezone: TIMEZONE });    // sesaat setelah Sesi I tutup, khusus Jumat
+  cron.schedule('55 15 * * 1-5', runSafely, { timezone: TIMEZONE });  // sesaat setelah pasar tutup
 
   cron.schedule('0 0 * * *', () => {
     runCacheCleanup().catch((err) => {
       console.error('[CRON] Kesalahan tak terduga saat cleanup cache:', err.message);
     });
-  });
+  }, { timezone: TIMEZONE });
 
-  console.log('[CEK ZONA WAKTU] Server menganggap sekarang:', new Date().toString());
-  console.log('⏰ Background Jobs (Cron) berhasil diinisialisasi: watchlist 4x sesuai jam bursa + cache cleanup (harian 00:00).');
+  console.log(`[CEK ZONA WAKTU] Server menganggap sekarang: ${new Date().toString()}`);
+  console.log('⏰ Background Jobs (Cron) berhasil diinisialisasi, memakai zona waktu Asia/Jakarta.');
 }
 
 module.exports = {

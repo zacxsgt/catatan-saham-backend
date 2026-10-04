@@ -1,8 +1,9 @@
 // src/controllers/stockController.js
 const { processStockRequest, getCachedStockData } = require('../services/stockService');
+const { runWatchlistUpdate } = require('../jobs/stockCron');
 const { AppError } = require('../utils/errors');
 
-const MAX_BUDGET = 1000000000000; // 1 Triliun
+const MAX_BUDGET = 1000000000000;
 
 async function analyzeStock(req, res) {
   try {
@@ -71,8 +72,6 @@ async function analyzeStock(req, res) {
   }
 }
 
-// [BARU] Endpoint ringan khusus formulir Beli/Jual: hanya baca cache, tidak pernah
-// memanggil Yahoo Finance langsung.
 async function getCachedPriceController(req, res) {
   try {
     const { symbol } = req.params;
@@ -92,7 +91,22 @@ async function getCachedPriceController(req, res) {
   }
 }
 
+// [BARU] Memicu pengisian ulang seluruh watchlist secara manual, tanpa menunggu
+// jadwal cron. Memanggil fungsi yang sama persis dipakai cron otomatis.
+// Butuh waktu cukup lama (sekitar 16 simbol x beberapa detik), karena
+// sengaja diberi jeda antar simbol supaya tidak kena pembatasan Yahoo Finance.
+async function refreshWatchlistController(req, res) {
+  try {
+    const result = await runWatchlistUpdate();
+    return res.status(200).json({ success: true, data: result });
+  } catch (error) {
+    console.error(`[CONTROLLER ERROR] refreshWatchlist (User: ${req.user?.id || 'Unknown'}):`, error.message);
+    return res.status(500).json({ success: false, error: 'Gagal memperbarui watchlist.' });
+  }
+}
+
 module.exports = {
   analyzeStock,
-  getCachedPriceController
+  getCachedPriceController,
+  refreshWatchlistController
 };
