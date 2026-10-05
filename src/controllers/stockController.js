@@ -1,5 +1,5 @@
 // src/controllers/stockController.js
-const { processStockRequest, getCachedStockData } = require('../services/stockService');
+const { processStockRequest, getStockData } = require('../services/stockService');
 const { runWatchlistUpdate } = require('../jobs/stockCron');
 const { AppError } = require('../utils/errors');
 
@@ -72,12 +72,24 @@ async function analyzeStock(req, res) {
   }
 }
 
+// [UBAH] Sekarang memakai getStockData (cek cache, kalau basi ambil langsung dari
+// Yahoo lalu simpan), bukan lagi getCachedStockData yang cuma baca cache tanpa
+// pernah mengisi yang kosong. Ini memungkinkan simbol di luar watchlist otomatis
+// tersimpan begitu dicari, tanpa memanggil AI sama sekali.
 async function getCachedPriceController(req, res) {
   try {
     const { symbol } = req.params;
-    const data = await getCachedStockData(symbol);
+    const data = await getStockData(symbol);
 
-    return res.status(200).json({ success: true, data });
+    return res.status(200).json({
+      success: true,
+      data: {
+        symbol: data.symbol,
+        name: data.name,
+        current_price: data.current_price,
+        last_updated: data.last_updated,
+      }
+    });
   } catch (error) {
     console.error(`[CONTROLLER ERROR] getCachedPrice (User: ${req.user?.id || 'Unknown'}):`, error.message);
 
@@ -91,10 +103,6 @@ async function getCachedPriceController(req, res) {
   }
 }
 
-// [BARU] Memicu pengisian ulang seluruh watchlist secara manual, tanpa menunggu
-// jadwal cron. Memanggil fungsi yang sama persis dipakai cron otomatis.
-// Butuh waktu cukup lama (sekitar 16 simbol x beberapa detik), karena
-// sengaja diberi jeda antar simbol supaya tidak kena pembatasan Yahoo Finance.
 async function refreshWatchlistController(req, res) {
   try {
     const result = await runWatchlistUpdate();

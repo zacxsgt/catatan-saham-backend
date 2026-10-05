@@ -30,8 +30,21 @@ const analyzeLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// [BARU] Dibatasi ketat, cuma 2 kali per jam, supaya tidak dipakai berulang-ulang
-// memicu banyak panggilan Yahoo Finance sekaligus.
+// [BARU] Endpoint harga sekarang bisa memicu panggilan Yahoo Finance untuk simbol
+// yang belum pernah di-cache, jadi diberi batas sendiri supaya tidak disalahgunakan
+// dengan mengetik banyak simbol berbeda secara cepat berturut-turut.
+const priceLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req.ip),
+  message: {
+    success: false,
+    error: 'Terlalu banyak pencarian harga. Coba lagi dalam beberapa menit.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 const refreshLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 2,
@@ -45,7 +58,7 @@ const refreshLimiter = rateLimit({
 });
 
 router.post('/analyze', ipGateLimiter, requireAuth, analyzeLimiter, analyzeStock);
-router.get('/price/:symbol', ipGateLimiter, requireAuth, getCachedPriceController);
+router.get('/price/:symbol', ipGateLimiter, requireAuth, priceLimiter, getCachedPriceController);
 router.post('/refresh-watchlist', ipGateLimiter, requireAuth, refreshLimiter, refreshWatchlistController);
 
 module.exports = router;
