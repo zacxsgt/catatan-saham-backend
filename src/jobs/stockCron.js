@@ -17,77 +17,98 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function runWatchlistUpdate() {
-  console.log(`[CRON] Mulai update watchlist (${WATCHLIST.length} simbol)...`);
+// Mengambil semua simbol saham yang sedang dipegang user mana pun,
+// supaya harganya ikut disegar meski tidak ada di watchlist tetap.
+async function getHeldSymbols() {
+  const { data, error } = await supabaseAdmin
+    .from('transactions')
+    .select('symbol')
 
-  let successCount = 0;
-  let failCount = 0;
-
-  for (const symbol of WATCHLIST) {
-    try {
-      await getStockData(symbol);
-      successCount++;
-    } catch (error) {
-      failCount++;
-      console.error(`[CRON] ❌ Watchlist ${symbol} gagal diperbarui:`, error.message);
-    }
-    await sleep(DELAY_BETWEEN_REQUESTS_MS);
+  if (error || !data) {
+    console.warn('[CRON] Gagal membaca daftar saham yang dipegang:', error?.message)
+    return []
   }
 
-  console.log(`[CRON] Update watchlist selesai. Berhasil: ${successCount}, Gagal: ${failCount}`);
-  return { successCount, failCount };
+  return [...new Set(data.map((r) => r.symbol))]
+}
+
+async function runWatchlistUpdate() {
+  const heldSymbols = await getHeldSymbols()
+
+  // Gabungkan watchlist tetap dengan saham yang sedang dipegang, tanpa duplikat.
+  const allSymbols = [...new Set([...WATCHLIST, ...heldSymbols])]
+
+  console.log(`[CRON] Mulai update ${allSymbols.length} simbol (${WATCHLIST.length} watchlist + ${allSymbols.length - WATCHLIST.length} kepemilikan)...`)
+
+  let successCount = 0
+  let failCount = 0
+
+  for (const symbol of allSymbols) {
+    try {
+      await getStockData(symbol)
+      successCount++
+    } catch (error) {
+      failCount++
+      console.error(`[CRON] ❌ ${symbol} gagal diperbarui:`, error.message)
+    }
+    await sleep(DELAY_BETWEEN_REQUESTS_MS)
+  }
+
+  console.log(`[CRON] Update selesai. Berhasil: ${successCount}, Gagal: ${failCount}`)
+  return { successCount, failCount }
 }
 
 async function runCacheCleanup() {
-  console.log('[CRON] Menjalankan pembersihan cache saham lama...');
+  console.log('[CRON] Menjalankan pembersihan cache saham lama...')
 
   try {
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    // Ambil semua simbol yang masih relevan, tidak boleh dihapus.
+    const heldSymbols = await getHeldSymbols()
+    const protectedSymbols = [...new Set([...WATCHLIST, ...heldSymbols])]
 
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+
+    // Hanya hapus cache yang lebih dari 24 jam DAN tidak ada di daftar terlindungi.
     const { data, error } = await supabaseAdmin
       .from('stock_prices')
       .delete()
       .lt('last_updated', oneDayAgo)
-      .select();
+      .not('symbol', 'in', `(${protectedSymbols.map((s) => `"${s}"`).join(',')})`)
+      .select()
 
     if (error) {
-      console.error('[CRON ERROR] Gagal membersihkan cache dari Supabase:', error.message);
+      console.error('[CRON ERROR] Gagal membersihkan cache:', error.message)
     } else {
-      const deletedCount = data ? data.length : 0;
-      console.log(`[CRON SUCCESS] Berhasil menghapus ${deletedCount} cache saham usang.`);
+      console.log(`[CRON SUCCESS] Menghapus ${data?.length ?? 0} cache saham usang yang tidak lagi relevan.`)
     }
   } catch (error) {
-    console.error('[CRON EXCEPTION] Terjadi kesalahan sistem saat pembersihan:', error.message);
+    console.error('[CRON EXCEPTION] Kesalahan saat pembersihan:', error.message)
   }
 }
 
 function startCronJobs() {
   const runSafely = () => {
     runWatchlistUpdate().catch((err) => {
-      console.error('[CRON] Kesalahan tak terduga saat update watchlist:', err.message);
-    });
-  };
+      console.error('[CRON] Kesalahan tak terduga saat update watchlist:', err.message)
+    })
+  }
 
-  // [FIX] Memakai opsi timezone resmi, bukan hitungan manual selisih jam.
-  // Jam di bawah ini sudah dalam WIB, pustaka yang menerjemahkan ke jam
-  // server sendiri, bukan kita.
-  cron.schedule('55 8 * * 1-5', runSafely, { timezone: TIMEZONE });   // sesaat sebelum pasar buka
-  cron.schedule('5 12 * * 1-4', runSafely, { timezone: TIMEZONE });   // sesaat setelah Sesi I tutup, Senin-Kamis
-  cron.schedule('35 11 * * 5', runSafely, { timezone: TIMEZONE });    // sesaat setelah Sesi I tutup, khusus Jumat
-  cron.schedule('55 15 * * 1-5', runSafely, { timezone: TIMEZONE });  // sesaat setelah pasar tutup
+  cron.schedule('55 8 * * 1-5', runSafely, { timezone: TIMEZONE })
+  cron.schedule('5 12 * * 1-4', runSafely, { timezone: TIMEZONE })
+  cron.schedule('35 11 * * 5', runSafely, { timezone: TIMEZONE })
+  cron.schedule('55 15 * * 1-5', runSafely, { timezone: TIMEZONE })
 
   cron.schedule('0 0 * * *', () => {
     runCacheCleanup().catch((err) => {
-      console.error('[CRON] Kesalahan tak terduga saat cleanup cache:', err.message);
-    });
-  }, { timezone: TIMEZONE });
+      console.error('[CRON] Kesalahan tak terduga saat cleanup:', err.message)
+    })
+  }, { timezone: TIMEZONE })
 
-  console.log(`[CEK ZONA WAKTU] Server menganggap sekarang: ${new Date().toString()}`);
-  console.log('⏰ Background Jobs (Cron) berhasil diinisialisasi, memakai zona waktu Asia/Jakarta.');
+  console.log('⏰ Background Jobs (Cron) berhasil diinisialisasi, memakai zona waktu Asia/Jakarta.')
 }
 
 module.exports = {
   startCronJobs,
   runWatchlistUpdate,
   runCacheCleanup
-};
+}
