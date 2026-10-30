@@ -3,13 +3,16 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { ipKeyGenerator } = require('express-rate-limit');
 const { analyzeStock, getCachedPriceController, refreshWatchlistController } = require('../controllers/stockController');
+const { getAllPricesController } = require('../controllers/priceController');
 const requireAuth = require('../middlewares/authMiddleware');
 
 const router = express.Router();
 
+// Dilonggarkan dari 60 ke 150: satu halaman bisa memicu beberapa permintaan.
+// Permintaan analisis AI yang mahal tetap dibatasi ketat di limiter terpisah.
 const ipGateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 60,
+  max: 150,
   message: {
     success: false,
     error: 'Terlalu banyak permintaan dari jaringan ini. Silakan coba lagi nanti.'
@@ -30,12 +33,11 @@ const analyzeLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// [BARU] Endpoint harga sekarang bisa memicu panggilan Yahoo Finance untuk simbol
-// yang belum pernah di-cache, jadi diberi batas sendiri supaya tidak disalahgunakan
-// dengan mengetik banyak simbol berbeda secara cepat berturut-turut.
+// Sebagian besar permintaan harga hanya membaca cache, dan panggilan ke Yahoo
+// sudah diantre di service, jadi batas ini bisa lebih longgar.
 const priceLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: 120,
   keyGenerator: (req) => req.user?.id || ipKeyGenerator(req.ip),
   message: {
     success: false,
@@ -59,6 +61,7 @@ const refreshLimiter = rateLimit({
 
 router.post('/analyze', ipGateLimiter, requireAuth, analyzeLimiter, analyzeStock);
 router.get('/price/:symbol', ipGateLimiter, requireAuth, priceLimiter, getCachedPriceController);
+router.get('/prices', ipGateLimiter, requireAuth, priceLimiter, getAllPricesController);
 router.post('/refresh-watchlist', ipGateLimiter, requireAuth, refreshLimiter, refreshWatchlistController);
 
 module.exports = router;

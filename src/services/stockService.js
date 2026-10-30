@@ -10,6 +10,27 @@ const { generateAIResponse } = require('../utils/aiClient');
 const { ValidationError, NotFoundError, ExternalServiceError } = require('../utils/errors');
 
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 menit
+const YAHOO_MIN_GAP_MS = 1500;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Semua panggilan ke Yahoo dijalankan satu per satu dengan jeda, supaya banyak
+// permintaan yang datang bersamaan tidak menjadi lonjakan panggilan ke Yahoo.
+let yahooQueue = Promise.resolve();
+
+function runYahooSerially(task) {
+  const result = yahooQueue.then(async () => {
+    try {
+      return await task();
+    } finally {
+      await sleep(YAHOO_MIN_GAP_MS);
+    }
+  });
+  yahooQueue = result.catch(() => {});
+  return result;
+}
 
 function mapSectorToCategory(sector = '') {
   const s = sector.toLowerCase();
@@ -51,11 +72,19 @@ async function getStockData(symbol) {
 
   let quote;
   try {
-    quote = await yahooFinance.quoteSummary(yfSymbol, {
-      modules: ['financialData', 'defaultKeyStatistics', 'price', 'summaryDetail', 'assetProfile']
-    });
+    quote = await runYahooSerially(() =>
+      yahooFinance.quoteSummary(yfSymbol, {
+        modules: ['financialData', 'defaultKeyStatistics', 'price', 'summaryDetail', 'assetProfile']
+      })
+    );
   } catch (error) {
     console.error(`[FETCH ERROR] ${cleanSymbol}:`, error.message);
+
+    // Kalau Yahoo gagal tapi masih ada cache lama, pakai itu daripada gagal total.
+    if (cachedData) {
+      console.warn(`[STALE FALLBACK] Memakai cache lama untuk ${cleanSymbol}`);
+      return cachedData;
+    }
 
     const isRateLimited = error.message && error.message.includes('Too Many Requests');
 
@@ -116,11 +145,7 @@ async function getStockData(symbol) {
   return stockData;
 }
 
-// [BARU] Khusus untuk kebutuhan ringan seperti formulir Beli/Jual: HANYA membaca
-// dari cache Supabase, TIDAK PERNAH memanggil Yahoo Finance secara langsung.
-// Kalau simbolnya belum pernah tersimpan (belum pernah masuk watchlist atau belum
-// pernah dianalisis), fungsi ini melempar 404, bukan diam-diam fetch langsung —
-// supaya formulir tidak memicu panggilan Yahoo yang bisa kena rate-limit.
+// Hanya membaca cache untuk satu simbol, tidak pernah memanggil Yahoo.
 async function getCachedStockData(symbol) {
   const cleanSymbol = symbol.toUpperCase().trim();
 
@@ -139,6 +164,22 @@ async function getCachedStockData(symbol) {
   }
 
   return data;
+}
+
+// [BARU] Semua harga yang tersimpan di cache dalam satu kali baca, tanpa Yahoo.
+// Dipakai halaman Analisis untuk menyaring saham yang terjangkau.
+async function getAllCachedPrices() {
+  const { data, error } = await supabase
+    .from('stock_prices')
+    .select('symbol, name, current_price, last_updated')
+    .order('symbol', { ascending: true });
+
+  if (error) {
+    console.error('[CACHE ERROR] Gagal membaca semua harga cache:', error.message);
+    throw new Error('Gagal membaca harga dari cache.');
+  }
+
+  return data || [];
 }
 
 async function analyzeStockWithAI(stockData, budget) {
@@ -238,6 +279,7 @@ async function processStockRequest(symbol, budget) {
 module.exports = {
   getStockData,
   getCachedStockData,
+  getAllCachedPrices,
   analyzeStockWithAI,
   processStockRequest
 };
